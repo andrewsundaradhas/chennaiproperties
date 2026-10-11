@@ -1,0 +1,26 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+server/data/
+*.log
+coverage/
+.DS_Store
+
+# Credentials and certificates (e.g. Supabase CA cert, private keys)
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+supabase/.temp/
+supabase/.branches/
+
+# Local tooling / deploy state
+.vercel/
+.netlify/
+.idea/
+*.sqlite
+*.db
