@@ -120,6 +120,7 @@ describe('rule-based interpretation (deterministic fallback)', () => {
     expect(interp('Only furnished ones.', existing)).toMatchObject({ intent: 'refine', requirements: { set: { furnishing: 'furnished' } } });
     expect(interp('Actually my budget is ₹30,000.', existing)).toMatchObject({ intent: 'refine', requirements: { set: { budget_max: 30000 } } });
     expect(interp('show cheaper ones', existing)).toMatchObject({ intent: 'refine', relative_budget: 'cheaper' });
+    expect(interp('Any property type is fine', { ...existing, property_type: 'independent_house' })).toMatchObject({ intent: 'refine', requirements: { clear: ['property_type'] } });
     expect(interp('actually i can stretch to 30 thousand', existing)).toMatchObject({ intent: 'refine', requirements: { set: { budget_max: 30000 } } });
   });
   it('resolves ordinal references and listing codes', () => {

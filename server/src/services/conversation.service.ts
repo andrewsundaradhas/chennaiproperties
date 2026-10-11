@@ -67,7 +67,15 @@ export async function handleCustomerMessage(
   deps: ConversationDeps,
   conversation: Conversation,
   text: string,
-  opts: { clientMessageId?: string; requestId?: string } = {},
+  opts: {
+    clientMessageId?: string;
+    requestId?: string;
+    /**
+     * A plan built by trusted server code (e.g. a Telegram button tap). Skips the AI step; it is
+     * still schema-validated, and every listing reference is still resolved against the database.
+     */
+    presetInterpretation?: Interpretation;
+  } = {},
 ): Promise<HandleResult> {
   const { db } = deps;
   const started = Date.now();
@@ -111,22 +119,26 @@ export async function handleCustomerMessage(
   let interp: Interpretation | null = null;
   let usedFallback = false;
   let aiErrorCategory: string | undefined;
-  try {
-    interp = InterpretationSchema.parse(
-      await withTimeout(deps.ai.interpret(interpretInput), deps.interpretTimeoutMs ?? 45000),
-    );
-  } catch (err) {
-    aiErrorCategory = err instanceof AiError ? err.category : 'invalid_output';
-    logger.warn('ai.interpret_failed', { requestId: opts.requestId, provider: deps.ai.name, category: aiErrorCategory });
-    if (deps.fallback !== deps.ai) {
-      try {
-        const fb = await deps.fallback.interpret(interpretInput);
-        if (fb.intent !== 'unclear') {
-          interp = fb;
-          usedFallback = true;
+  if (opts.presetInterpretation) {
+    interp = InterpretationSchema.parse(opts.presetInterpretation);
+  } else {
+    try {
+      interp = InterpretationSchema.parse(
+        await withTimeout(deps.ai.interpret(interpretInput), deps.interpretTimeoutMs ?? 45000),
+      );
+    } catch (err) {
+      aiErrorCategory = err instanceof AiError ? err.category : 'invalid_output';
+      logger.warn('ai.interpret_failed', { requestId: opts.requestId, provider: deps.ai.name, category: aiErrorCategory });
+      if (deps.fallback !== deps.ai) {
+        try {
+          const fb = await deps.fallback.interpret(interpretInput);
+          if (fb.intent !== 'unclear') {
+            interp = fb;
+            usedFallback = true;
+          }
+        } catch {
+          // fall through to the retry message
         }
-      } catch {
-        // fall through to the retry message
       }
     }
   }
@@ -387,6 +399,7 @@ function relaxationSuggestions(r: Requirements): string[] {
   const s: string[] = [];
   if (r.budget_max) s.push(`raising the budget to about ${budgetFmt(r)(Math.round((r.budget_max * 1.2) / 1000) * 1000)}`);
   if (r.furnishing) s.push('any furnishing');
+  else if (r.property_type) s.push(`any property type (not only ${humanise(r.property_type)})`);
   else if (r.bedrooms) s.push(`${r.bedrooms > 1 ? r.bedrooms - 1 : r.bedrooms + 1}BHK`);
   else if (r.locality_terms.length) s.push('a nearby area');
   return s.slice(0, 2);
@@ -400,6 +413,7 @@ function relaxationChips(r: Requirements): Card[] {
     options.push({ label: `Budget ${label}`, message: `Actually my budget is ${label}` });
   }
   if (r.furnishing) options.push({ label: 'Any furnishing', message: 'Any furnishing is fine' });
+  if (r.property_type) options.push({ label: 'Any property type', message: 'Any property type is fine' });
   if (r.bedrooms && r.bedrooms > 1) options.push({ label: `${r.bedrooms - 1}BHK`, message: `Show ${r.bedrooms - 1}BHK instead` });
   return options.length ? [{ type: 'quick_replies', options: options.slice(0, 3) }] : [];
 }

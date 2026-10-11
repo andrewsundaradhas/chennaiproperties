@@ -33,6 +33,7 @@ import { importPropertiesCsv } from '../../services/csv-import.service.js';
 import { createProperty, deactivateProperty, updateProperty } from '../../services/property.service.js';
 import { describeFilters } from '../../services/search.service.js';
 import { ADMIN_COOKIE, readCookie, requireAdmin } from '../middleware/auth.js';
+import type { TelegramStatus } from '../../channels/telegram/poller.js';
 import { rateLimit, requireJsonForMutations } from '../middleware/common.js';
 
 const SESSION_HOURS = 12;
@@ -68,7 +69,7 @@ function adminProperty(p: Property) {
 // Pre-computed so login takes similar time whether or not the email exists.
 const DUMMY_HASH = hashPassword('timing-equaliser-not-a-real-password');
 
-export function adminRoutes(db: Db, env: Env): Router {
+export function adminRoutes(db: Db, env: Env, telegramStatus: () => TelegramStatus | null = () => null): Router {
   const r = Router();
   r.use(requireJsonForMutations);
 
@@ -143,6 +144,7 @@ export function adminRoutes(db: Db, env: Env): Router {
       visit_requests: leads.visit_requests,
       total_leads: leads.total,
       demo_properties: demo.rows[0]?.n ?? 0,
+      telegram: telegramStatus(),
     });
   });
 

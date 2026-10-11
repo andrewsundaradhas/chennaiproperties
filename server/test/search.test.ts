@@ -72,6 +72,14 @@ describe('deterministic property search (no AI)', () => {
     expect(none.nearMatch).toBeUndefined();
   });
 
+  it('offers other property types as a labelled near match when the type has no matches', async () => {
+    const r = await searchProperties(db, req({ transaction_type: 'rent', locality_terms: ['Adyar'], property_type: 'independent_house' }));
+    expect(r.results).toEqual([]);
+    expect(r.nearMatch?.relaxed).toBe('property_type');
+    expect(r.nearMatch?.explanation).toMatch(/no independent house matched/);
+    expect(r.nearMatch?.results.every((x) => x.property.locality === 'Adyar')).toBe(true);
+  });
+
   it('reports an unknown locality instead of guessing', async () => {
     const r = await searchProperties(db, req({ transaction_type: 'rent', locality_terms: ['Atlantis'] }));
     expect(r.status).toBe('unknown_locality');

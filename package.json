@@ -25,7 +25,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "check": "npm run check:secrets && npm run typecheck && npm run lint && npm test",
-    "check:secrets": "node scripts/check-secrets.mjs"
+    "check:secrets": "node scripts/check-secrets.mjs",
+    "telegram:webhook": "npm run telegram:webhook -w server --"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

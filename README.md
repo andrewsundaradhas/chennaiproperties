@@ -4,7 +4,7 @@ A local-first, AI-assisted property discovery and lead-management prototype. Cus
 
 > **Demo data:** every seeded listing (`CP-DEMO-001` … `CP-DEMO-036`) is invented sample data. It is flagged `is_demo = true` and labelled "Sample data" in the UI. It is not ChennaiProperties inventory.
 >
-> **WhatsApp is deferred.** No number is connected or registered. See [docs/whatsapp-adapter.md](docs/whatsapp-adapter.md).
+> **Channels:** web chat and Telegram are live (see [Telegram bot](#telegram-bot)). **WhatsApp is deferred.** No number is connected or registered. See [docs/whatsapp-adapter.md](docs/whatsapp-adapter.md).
 
 ---
 
@@ -85,6 +85,75 @@ If Gemini fails (timeout, rate limit, invalid output), the turn falls back to th
 
 ---
 
+## Telegram bot
+
+Customers can use the assistant on Telegram as well as the web chat. The Telegram adapter (`server/src/channels/telegram/`) only translates messages and buttons. Everything else is the **same code the web chat uses**: Gemini interpretation and the rule-based fallback, deterministic database search, requirement memory, the grounding guard, shortlists and leads. Telegram enquiries appear in the dashboard with a **Telegram** badge.
+
+### 1. Create a bot and add the token
+1. In Telegram, open **@BotFather** and send `/newbot`. Choose a name and a username ending in `bot`.
+2. Copy the token (`123456789:AA…`) into `.env`:
+   ```
+   TELEGRAM_BOT_TOKEN=123456789:AA...
+   ```
+   Never put it in source code. `.env` is gitignored, and `npm run check:secrets` blocks accidental commits.
+
+### 2. Run it
+```bash
+npm run dev        # starts the database connection, API, web app AND the Telegram bot (long polling)
+```
+The bot runs **inside the API process**, so there's no extra command and no chance of two pollers from one checkout. The embedded database is single-process, so a separate process wouldn't work locally anyway. On startup the log shows `telegram.polling_started {"username":"your_bot"}`, and the dashboard **Overview** shows "Telegram bot is live as @…". Without a token the log shows `telegram.disabled` with setup instructions, and everything else runs normally.
+
+### 3. Test it
+Open `https://t.me/<your_bot_username>` from your own Telegram account:
+
+| Try | Expected |
+|---|---|
+| `/start` | Welcome text, demo-data notice, main-menu buttons |
+| `Find a 2BHK for rent in Velachery under 25000` | Header text, then one photo card per listing with **Details / Save / Callback / Site visit** buttons |
+| `Show me furnished properties`, then `actually my budget is 30000` | Search refined; location and BHK kept |
+| `Does CP-DEMO-005 allow pets?` | "The pet policy isn't recorded…" |
+| Tap **⭐ Save** on two listings, then **Compare my shortlist** | Side-by-side comparison |
+| Tap **📞 Callback** | Lead recorded. A **Share my phone number** button appears (Telegram shares only your own verified number) |
+| `I want to visit the first one this weekend` | Site-visit **request** recorded, explicitly not confirmed |
+| `/reset` → **Yes, start fresh** | New search context. Past leads and messages are kept |
+| Dashboard → **Leads** | The enquiry, with a Telegram badge, the listing, the phone and the transcript |
+
+Commands: `/start`, `/properties`, `/help`, `/reset`, `/cancel`. They're registered with Telegram automatically, so they appear in the bot's menu.
+
+### 4. Stop it safely
+Press `Ctrl+C` in the `npm run dev` terminal. The poller aborts its long poll, finishes in-flight messages and releases its lease.
+
+### How it stays safe and consistent
+- **Identity:** the numeric Telegram user ID is the identity; replies go to the chat ID. Usernames and display names are never treated as verified identity or contact details. Phone numbers come only from the user typing them, or from Telegram's contact-share of **their own** account (forwarded contacts are rejected). Telegram and web customers are separate records.
+- **Duplicates:** each `update_id` is processed once (`telegram_updates` table, which survives restarts). Message and lead creation are idempotent too.
+- **One consumer per bot:** a database lease plus Telegram's own `409 Conflict`. A second instance waits on standby.
+- **Buttons are validated server-side.** Callback data carries only a listing code or a short action. Every listing is re-read from the database and must be active. Quick-reply buttons resolve only against the user's own messages. Customers have no admin actions.
+- **Button taps skip the AI** (fast and free). Typed messages go through Gemini, falling back to rules if Gemini fails.
+- **Reliability:** per-user rate limit (`TELEGRAM_MAX_MESSAGES_PER_MINUTE`), bounded retries with `retry_after` for 429/5xx, 2,000-character inbound cap, long replies split under Telegram's 4,096-character limit, graceful fallback to text when a photo can't be sent. Non-text media gets a polite "text only" reply.
+- **Photos:** Telegram can't show SVG, so the demo images have PNG twins (`web/public/demo-images/*.png`). Remote `https://` image URLs are sent as-is. Uploaded photos are cached by Telegram `file_id`.
+- **Logs never contain the token.** Errors are redacted, and network errors never echo the request URL.
+
+### Troubleshooting
+| Symptom | Fix |
+|---|---|
+| `telegram.disabled … not in the expected format` | Re-copy the full token from @BotFather (`digits:letters`) |
+| `telegram.start_failed … rejected by Telegram` | The token is wrong or was revoked. Use `/token` or `/revoke` in @BotFather and update `.env` |
+| `telegram.start_failed … Could not reach Telegram` | Network or firewall issue. Check `curl https://api.telegram.org`, then restart |
+| `telegram.lease_held_elsewhere` / Overview says "standby" | Another process is polling this bot (another terminal or machine). Stop it. A crashed process's lease expires within 90 s |
+| `telegram.polling_conflict` (409) | Some other program is calling `getUpdates` with this token, or a webhook is set. Stop it, or run `npm run telegram:webhook -- --delete` |
+| `A webhook is configured…` | `npm run telegram:webhook -- --delete`, then restart |
+| Bot doesn't answer in a group | By design: it only serves private chats |
+| Replies are slow or "simpler" | Gemini latency or rate limit. The rule-based fallback answers instead (see Known limitations) |
+
+### Production webhook (later)
+Polling is for local development. For a deployed API with HTTPS:
+1. Set `TELEGRAM_MODE=webhook` and `TELEGRAM_WEBHOOK_SECRET=<16+ random chars>` on the server.
+2. `npm run telegram:webhook -- --url https://<your-api>/api/telegram/webhook` registers it with that secret. Check it with `npm run telegram:webhook -- --info`.
+3. Telegram then POSTs updates to `/api/telegram/webhook`. Requests without the secret header are rejected with 401. Updates are acknowledged immediately and processed asynchronously through the same `handleUpdate()` path, with the same dedupe.
+4. To go back to local polling: `npm run telegram:webhook -- --delete`.
+
+---
+
 ## Commands
 
 | Command | What it does |
@@ -97,6 +166,7 @@ If Gemini fails (timeout, rate limit, invalid output), the turn falls back to th
 | `npm run admin:create -- --email x@y.z [--name N] [--role admin\|agent]` | Create an admin or reset their password. Uses `ADMIN_PASSWORD` (≥12 chars) if set, otherwise prints a generated one |
 | `npm run import:csv -- file.csv [--commit]` | Validate (dry run by default), then import listings. All-or-nothing |
 | `npm test` | Server (Vitest + Supertest, in-memory PGlite) and web (Vitest + Testing Library) tests |
+| `npm run telegram:webhook -- --url URL \| --delete \| --info` | Manage the production Telegram webhook |
 | `npm run check:secrets` | Scans every file git would commit for keys, tokens and passwords in DB URLs |
 | `npm run typecheck` / `npm run lint` / `npm run check` | Types / ESLint / secrets + types + lint + tests |
 | `npm run build` && `NODE_ENV=production npm start` | Compiled API that also serves `web/dist` on one port |
@@ -161,13 +231,14 @@ To use Supabase, set `DATABASE_URL` in `.env` (never commit it).
 
 ## Tests
 
-`npm test` runs 98 tests:
+`npm test` runs 134 tests:
 
 - **Unit:** requirement schema and merge semantics, locality aliases and corridors, price formatting, amount parsing, rule-based interpretation, the grounding guard, demo-data edge cases, property validation.
 - **Service:** search eligibility and ranking, unknown-value handling, near matches, live effect of edits and deactivation, seed idempotency, all-or-nothing CSV import.
 - **Conversation (AI mocked):** the full PRD journey, provider timeout and fallback, invalid or unknown-tool output, fabricated rewrites rejected, duplicate message IDs.
 - **Gemini adapter:** header auth, bounded retries, no retry on auth errors, invalid JSON, timeouts.
 - **API:** validation, the common error format, session isolation, admin auth boundaries, CSRF hardening, CRUD, pagination, lead updates with audit, CSV import, rate limiting, **persistence across restart** (file-backed DB is closed and reopened).
+- **Telegram (mocked Bot API, no real credentials):** commands, rental and sale search, multi-message refinement, buttons and callback validation, photo cards and caching, details with unknown facts, no results, shortlist and compare, callback leads with contact sharing, unconfirmed site visits, duplicate updates, two-user isolation, rate limiting, retries and 429 handling, token redaction in logs, missing, malformed or revoked tokens, webhook secret, polling lease and offset, restart persistence.
 - **UI:** chat send/receive, result cards, loading and double-send prevention, error with retry, zero results, contact-form validation, admin login gate, overview counts, property-form validation, lead status update.
 
 PRD acceptance scenario → test mapping is in [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md).

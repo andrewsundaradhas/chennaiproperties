@@ -20,6 +20,7 @@ export interface Lead {
 export interface LeadListItem extends Lead {
   customer_name: string | null;
   customer_phone: string | null;
+  channel: string;
   listing_code: string | null;
   property_title: string | null;
 }
@@ -114,7 +115,7 @@ export const leadsRepo = {
       params,
     );
     const { rows } = await q.query<LeadListItem>(
-      `SELECT l.*, c.display_name AS customer_name, c.phone AS customer_phone,
+      `SELECT l.*, c.display_name AS customer_name, c.phone AS customer_phone, c.external_channel AS channel,
               p.listing_code, p.title AS property_title
        FROM leads l
        JOIN customers c ON c.id = l.customer_id

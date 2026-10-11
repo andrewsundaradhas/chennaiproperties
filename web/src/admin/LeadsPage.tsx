@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { EmptyState, ErrorAlert, Field, Spinner, StatusBadge } from '../components/ui';
+import { ChannelBadge, EmptyState, ErrorAlert, Field, Spinner, StatusBadge } from '../components/ui';
 import { ApiError, formatDateTime, humanise } from '../lib/api';
 import type { LeadListItem } from '../lib/types';
 import { useAdmin, useAdminApi } from './AdminApp';
@@ -80,6 +80,7 @@ export function LeadsPage() {
                   <tr>
                     <th>Received</th>
                     <th>Customer</th>
+                    <th>Channel</th>
                     <th>Request</th>
                     <th>Listing</th>
                     <th>Assigned</th>
@@ -97,6 +98,9 @@ export function LeadsPage() {
                       <td>
                         {l.customer_name ?? <span className="subtle">No name yet</span>}
                         <div className="subtle">{l.customer_phone ?? 'No phone shared'}</div>
+                      </td>
+                      <td>
+                        <ChannelBadge channel={l.channel} />
                       </td>
                       <td>
                         {humanise(l.enquiry_type)}

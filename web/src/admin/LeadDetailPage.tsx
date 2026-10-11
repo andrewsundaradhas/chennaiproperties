@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { DemoBadge, ErrorAlert, Field, Spinner, StatusBadge } from '../components/ui';
+import { ChannelBadge, DemoBadge, ErrorAlert, Field, Spinner, StatusBadge } from '../components/ui';
 import { ApiError, formatDateTime, humanise } from '../lib/api';
 import type { AdminProperty, ChatMessage, LeadListItem } from '../lib/types';
 import { useAdmin, useAdminApi } from './AdminApp';
@@ -116,7 +116,7 @@ export function LeadDetailPage() {
               <dt>Consent</dt>
               <dd>{humanise(customer?.consent_status ?? 'unknown')}</dd>
               <dt>Channel</dt>
-              <dd>{customer?.channel ?? '—'}</dd>
+              <dd>{customer ? <ChannelBadge channel={customer.channel} /> : '—'}</dd>
               {customer?.preferred_language && (
                 <>
                   <dt>Language</dt>

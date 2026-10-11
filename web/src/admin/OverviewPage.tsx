@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { EmptyState, ErrorAlert, Spinner, StatusBadge } from '../components/ui';
+import { ChannelBadge, EmptyState, ErrorAlert, Spinner, StatusBadge } from '../components/ui';
 import { ApiError, formatDateTime, humanise } from '../lib/api';
 import type { LeadListItem } from '../lib/types';
 import { useAdminApi } from './AdminApp';
@@ -11,6 +11,32 @@ interface Overview {
   visit_requests: number;
   total_leads: number;
   demo_properties: number;
+  telegram:
+    | { state: 'running'; username: string; mode: string }
+    | { state: 'waiting_for_lease'; username: string }
+    | { state: 'starting' }
+    | { state: 'disabled' | 'error'; reason: string }
+    | null;
+}
+
+function TelegramStatusLine({ status }: { status: Overview['telegram'] }) {
+  if (!status) return null;
+  if (status.state === 'running') {
+    return (
+      <div className="alert alert-ok">
+        Telegram bot is live as{' '}
+        <a href={`https://t.me/${status.username}`} target="_blank" rel="noreferrer">
+          @{status.username}
+        </a>{' '}
+        ({status.mode}). Telegram enquiries appear below with a Telegram badge.
+      </div>
+    );
+  }
+  if (status.state === 'starting') return <div className="alert alert-info">Telegram bot is starting…</div>;
+  if (status.state === 'waiting_for_lease') {
+    return <div className="alert alert-info">Telegram bot @{status.username} is being polled by another process; this server is on standby.</div>;
+  }
+  return <div className={`alert ${status.state === 'error' ? 'alert-error' : 'alert-info'}`}>Telegram bot off: {status.reason}</div>;
 }
 
 export function OverviewPage() {
@@ -47,6 +73,7 @@ export function OverviewPage() {
       {!data && !error && <Spinner />}
       {data && (
         <>
+          <TelegramStatusLine status={data.telegram} />
           {data.demo_properties > 0 && (
             <div className="alert alert-info">
               {data.demo_properties} active listing{data.demo_properties === 1 ? ' is' : 's are'} sample demo data (codes CP-DEMO-###). Replace them with
@@ -85,6 +112,7 @@ export function OverviewPage() {
                   <tr>
                     <th>Received</th>
                     <th>Customer</th>
+                    <th>Channel</th>
                     <th>Type</th>
                     <th>Listing</th>
                     <th>Status</th>
@@ -97,6 +125,9 @@ export function OverviewPage() {
                         <Link to={`/admin/leads/${l.id}`}>{formatDateTime(l.created_at)}</Link>
                       </td>
                       <td>{l.customer_name ?? <span className="subtle">No name yet</span>}</td>
+                      <td>
+                        <ChannelBadge channel={l.channel} />
+                      </td>
                       <td>{humanise(l.enquiry_type)}</td>
                       <td className="mono">{l.listing_code ?? '—'}</td>
                       <td>

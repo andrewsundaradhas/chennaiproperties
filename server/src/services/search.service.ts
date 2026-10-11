@@ -18,7 +18,7 @@ export interface RankedProperty {
   caveats: string[];
 }
 
-export type Relaxation = 'budget' | 'bedrooms' | 'locality' | 'furnishing';
+export type Relaxation = 'budget' | 'bedrooms' | 'locality' | 'furnishing' | 'property_type';
 
 export interface SearchOutcome {
   status: 'ok' | 'needs_transaction_type' | 'unknown_locality';
@@ -104,6 +104,14 @@ function relaxations(
       kind: 'budget',
       filter: { ...base, budget_max: raised },
       explanation: `slightly above your budget (up to ${fmt(raised)} instead of ${fmt(req.budget_max)})`,
+    });
+  }
+  if (req.property_type) {
+    // "house" is often used loosely for any home, so other property types are a useful near match.
+    out.push({
+      kind: 'property_type',
+      filter: { ...base, property_type: undefined },
+      explanation: `${req.property_type === 'apartment' ? 'not apartments' : `other property types (no ${humanise(req.property_type)} matched)`}`,
     });
   }
   if (req.furnishing) {

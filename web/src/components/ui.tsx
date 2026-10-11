@@ -44,6 +44,11 @@ export function StatusBadge({ status }: { status: AvailabilityStatus | LeadStatu
   return <span className={`badge ${STATUS_TONE[status] ?? ''}`}>{label}</span>;
 }
 
+export function ChannelBadge({ channel }: { channel: string }) {
+  const label = channel === 'telegram' ? 'Telegram' : channel === 'whatsapp' ? 'WhatsApp' : 'Web chat';
+  return <span className={`badge ${channel === 'telegram' ? 'badge-info' : ''}`}>{label}</span>;
+}
+
 export function DemoBadge() {
   return (
     <span className="badge badge-demo" title="Sample listing for demonstration — not real inventory">

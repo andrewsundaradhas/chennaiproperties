@@ -86,6 +86,7 @@ export interface LeadListItem {
   updated_at: string;
   customer_name: string | null;
   customer_phone: string | null;
+  channel: 'web' | 'whatsapp' | 'telegram';
   listing_code: string | null;
   property_title: string | null;
 }

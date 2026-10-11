@@ -178,6 +178,7 @@ export function interpretWithRules(input: InterpretInput): Interpretation {
   else if (/\b(unfurnished|not furnished|without furniture)\b/.test(t)) set.furnishing = 'unfurnished';
   else if (/\b(fully )?furnished\b/.test(t)) set.furnishing = 'furnished';
   if (/\b(any furnishing|furnishing doesn'?t matter)\b/.test(t)) clear.push('furnishing');
+  if (/\b(any (property )?type|any kind of (property|home)|type doesn'?t matter)\b/.test(t)) clear.push('property_type');
 
   const wantsParking = /\b(with|need|needs|want|require|must have|having)\b[^.?!]{0,20}\bparking\b|\bparking (is )?(needed|required|must)\b/.test(t);
   if (wantsParking) set.parking_required = true;

@@ -29,7 +29,7 @@ export const LeadStatus = z.enum([
   'spam',
 ]);
 export const EnquiryType = z.enum(['callback', 'site_visit', 'general']);
-export const Channel = z.enum(['web', 'whatsapp']);
+export const Channel = z.enum(['web', 'whatsapp', 'telegram']);
 
 export type TransactionType = z.infer<typeof TransactionType>;
 export type PropertyType = z.infer<typeof PropertyType>;

@@ -29,6 +29,12 @@ const EnvSchema = z.object({
   DATABASE_SSL: z.preprocess(emptyToUndefined, z.enum(['off', 'require', 'verify']).optional()),
   DATABASE_SSL_CA: z.preprocess(emptyToUndefined, z.string().optional()),
 
+  // Telegram (optional). Without a token the bot is simply disabled.
+  TELEGRAM_BOT_TOKEN: z.preprocess(emptyToUndefined, z.string().trim().optional()),
+  TELEGRAM_MODE: z.preprocess(emptyToUndefined, z.enum(['polling', 'webhook', 'off']).optional()),
+  TELEGRAM_WEBHOOK_SECRET: z.preprocess(emptyToUndefined, z.string().regex(/^[A-Za-z0-9_-]{16,256}$/, 'use 16-256 letters, digits, _ or -').optional()),
+  TELEGRAM_MAX_MESSAGES_PER_MINUTE: z.coerce.number().int().min(1).max(600).default(20),
+
   ADMIN_BOOTSTRAP_EMAIL: z.preprocess(emptyToUndefined, z.string().email().optional()),
   COOKIE_SECURE: z.preprocess(
     (v) => (typeof v === 'string' ? v === 'true' : v),

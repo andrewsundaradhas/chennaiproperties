@@ -25,6 +25,8 @@ export interface Conversation {
   status: 'active' | 'closed';
   agent_takeover: boolean;
   last_result_ids: string[];
+  external_chat_id: string | null;
+  channel_state: Record<string, unknown>;
   created_at: Date;
   updated_at: Date;
   last_message_at: Date | null;
@@ -42,7 +44,7 @@ export interface Message {
 }
 
 const CONV_COLS = `id, customer_id, channel, status, agent_takeover, last_result_ids::text[] AS last_result_ids,
-  created_at, updated_at, last_message_at`;
+  external_chat_id, channel_state, created_at, updated_at, last_message_at`;
 
 export const customersRepo = {
   /** Finds or creates the customer for a channel identity (unique per channel + external id). */
@@ -84,11 +86,12 @@ export const conversationsRepo = {
     customerId: string,
     channel: Channel,
     sessionTokenHash: string | null,
+    externalChatId: string | null = null,
   ): Promise<Conversation> {
     const { rows } = await q.query<Conversation>(
-      `INSERT INTO conversations (customer_id, channel, session_token_hash) VALUES ($1, $2, $3)
+      `INSERT INTO conversations (customer_id, channel, session_token_hash, external_chat_id) VALUES ($1, $2, $3, $4)
        RETURNING ${CONV_COLS}`,
-      [customerId, channel, sessionTokenHash],
+      [customerId, channel, sessionTokenHash, externalChatId],
     );
     return rows[0]!;
   },
@@ -116,6 +119,13 @@ export const conversationsRepo = {
       id,
       propertyIds,
     ]);
+  },
+  /** Ends a conversation's context (e.g. Telegram /reset). Messages and leads are kept. */
+  async close(q: Queryable, id: string): Promise<void> {
+    await q.query(`UPDATE conversations SET status = 'closed', updated_at = now() WHERE id = $1`, [id]);
+  },
+  async setChannelState(q: Queryable, id: string, state: Record<string, unknown>): Promise<void> {
+    await q.query(`UPDATE conversations SET channel_state = $2, updated_at = now() WHERE id = $1`, [id, JSON.stringify(state)]);
   },
   async touch(q: Queryable, id: string): Promise<void> {
     await q.query(`UPDATE conversations SET last_message_at = now(), updated_at = now() WHERE id = $1`, [id]);

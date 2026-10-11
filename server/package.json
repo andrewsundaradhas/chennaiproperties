@@ -14,7 +14,8 @@
     "import:csv": "tsx --env-file-if-exists=../.env src/scripts/import-csv.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "telegram:webhook": "tsx --env-file-if-exists=../.env src/scripts/telegram-webhook.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
