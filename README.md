@@ -154,6 +154,55 @@ Polling is for local development. For a deployed API with HTTPS:
 
 ---
 
+## Deploy to Vercel (chat + admin dashboard + Telegram)
+
+One Vercel project serves everything:
+- **Static site** (`web/dist`): customer chat at `/`, staff dashboard at `/admin`. Served by Vercel's CDN with SPA fallback.
+- **One serverless function** (`api/index.js` → `server/dist/serverless.js`): every `/api/*` route, including the Telegram webhook. It reuses the Express app per warm instance.
+- **Supabase** stays the database. The embedded database is never used on Vercel; startup fails clearly if `DATABASE_URL` is missing.
+
+All of this is configured in [vercel.json](vercel.json), so the Vercel UI needs no build settings.
+
+### Before the first deploy
+1. **Migrations** are not run by the function. Apply them from your Mac: `npm run db:migrate` (already done for the current Supabase project).
+2. **Push to a private GitHub repo.** `npm run check:secrets` must pass. `.env`, `server/data/` and `.vercel/` are gitignored, and `.vercelignore` covers CLI uploads.
+3. **Use a strong admin password**, because the dashboard becomes public: `ADMIN_PASSWORD='<long random>' npm run admin:create -- --email admin@example.com`.
+
+### Create the project
+Vercel → **Add New → Project** → import the GitHub repo. Leave the framework as **Other**; everything else comes from `vercel.json`. Under **Environment Variables** (Production) add:
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | Supabase **Transaction pooler** string (port **6543**): `postgresql://postgres.<ref>:<url-encoded-password>@aws-0-<region>.pooler.supabase.com:6543/postgres` |
+| `GEMINI_API_KEY` | your key |
+| `GEMINI_MODEL` | `gemini-3.8-flash` |
+| `TELEGRAM_BOT_TOKEN` | your bot token |
+| `TELEGRAM_WEBHOOK_SECRET` | same value as in your local `.env` (random, 16+ chars) |
+| `COOKIE_SECURE` | `true` |
+
+Detected automatically on Vercel, so you don't need to set them: `APP_ORIGIN` and `PUBLIC_BASE_URL` (from the production URL), `TELEGRAM_MODE=webhook`, and `DB_POOL_MAX=2`. Set `APP_ORIGIN` and `PUBLIC_BASE_URL` yourself only if you use a custom domain.
+
+Click **Deploy**, then open `https://<project>.vercel.app` (chat) and `/admin` (dashboard). The Overview should say *Telegram bot is live … (webhook)*.
+
+### Point Telegram at Vercel
+From your Mac, with the same token and secret in `.env`:
+```bash
+npm run telegram:webhook -- --url https://<project>.vercel.app/api/telegram/webhook
+npm run telegram:webhook -- --info        # shows the URL and any delivery errors
+```
+- On Vercel, each webhook update is **fully processed before the function responds**, because serverless instances may be frozen afterwards. `maxDuration` is 60 s. Retries are harmless because updates are de-duplicated.
+- Listing photos are sent as public URLs of the PNG demo images on your deployment.
+- Use the **production** URL. Vercel's Deployment Protection blocks Telegram from reaching protected preview URLs.
+- **One bot token = one mode.** Once the webhook is set, local `npm run dev` won't poll that bot (the log says a webhook is configured). For local development, create a second bot in @BotFather and put its token in your local `.env`, or run `npm run telegram:webhook -- --delete` to take the bot back to local polling.
+
+### Production notes
+- Rate limits are per serverless instance (in memory). That's adequate for a pilot; use a shared store before heavy public traffic.
+- Each cold start makes one `getMe` call to Telegram and opens up to 2 database connections through the transaction pooler.
+- Logs are in Vercel → Project → Logs. They are the same structured JSON as locally, and never include secrets.
+- Rollback: Vercel → Deployments → promote a previous deployment. The database is unaffected.
+
+---
+
 ## Commands
 
 | Command | What it does |
@@ -169,7 +218,7 @@ Polling is for local development. For a deployed API with HTTPS:
 | `npm run telegram:webhook -- --url URL \| --delete \| --info` | Manage the production Telegram webhook |
 | `npm run check:secrets` | Scans every file git would commit for keys, tokens and passwords in DB URLs |
 | `npm run typecheck` / `npm run lint` / `npm run check` | Types / ESLint / secrets + types + lint + tests |
-| `npm run build` && `NODE_ENV=production npm start` | Compiled API that also serves `web/dist` on one port |
+| `npm run build` && `NODE_ENV=production npm start` | Compiled API that also serves `web/dist` on one port (non-Vercel hosting) |
 
 Stop `npm run dev` before running `db:*`, `admin:create` or `import:csv` against the embedded database.
 
@@ -231,14 +280,14 @@ To use Supabase, set `DATABASE_URL` in `.env` (never commit it).
 
 ## Tests
 
-`npm test` runs 134 tests:
+`npm test` runs 139 tests:
 
 - **Unit:** requirement schema and merge semantics, locality aliases and corridors, price formatting, amount parsing, rule-based interpretation, the grounding guard, demo-data edge cases, property validation.
 - **Service:** search eligibility and ranking, unknown-value handling, near matches, live effect of edits and deactivation, seed idempotency, all-or-nothing CSV import.
 - **Conversation (AI mocked):** the full PRD journey, provider timeout and fallback, invalid or unknown-tool output, fabricated rewrites rejected, duplicate message IDs.
 - **Gemini adapter:** header auth, bounded retries, no retry on auth errors, invalid JSON, timeouts.
 - **API:** validation, the common error format, session isolation, admin auth boundaries, CSRF hardening, CRUD, pagination, lead updates with audit, CSV import, rate limiting, **persistence across restart** (file-backed DB is closed and reopened).
-- **Telegram (mocked Bot API, no real credentials):** commands, rental and sale search, multi-message refinement, buttons and callback validation, photo cards and caching, details with unknown facts, no results, shortlist and compare, callback leads with contact sharing, unconfirmed site visits, duplicate updates, two-user isolation, rate limiting, retries and 429 handling, token redaction in logs, missing, malformed or revoked tokens, webhook secret, polling lease and offset, restart persistence.
+- **Telegram (mocked Bot API, no real credentials):** commands, rental and sale search, multi-message refinement, buttons and callback validation, photo cards and caching, details with unknown facts, no results, shortlist and compare, callback leads with contact sharing, unconfirmed site visits, duplicate updates, two-user isolation, rate limiting, retries and 429 handling, token redaction in logs, missing, malformed or revoked tokens, webhook secret, polling lease and offset, restart persistence, Vercel mode (env defaults, process-before-ack webhook, public photo URLs, clean 503 when misconfigured).
 - **UI:** chat send/receive, result cards, loading and double-send prevention, error with retry, zero results, contact-form validation, admin login gate, overview counts, property-form validation, lead status update.
 
 PRD acceptance scenario → test mapping is in [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md).

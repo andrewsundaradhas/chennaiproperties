@@ -564,6 +564,82 @@ describe('configuration, polling and webhook', () => {
   });
 });
 
+describe('Vercel / serverless mode', () => {
+  const vercelEnv = (extra: Record<string, string> = {}) =>
+    loadEnv({
+      NODE_ENV: 'production',
+      AI_PROVIDER: 'rules',
+      VERCEL: '1',
+      VERCEL_PROJECT_PRODUCTION_URL: 'cp-test.vercel.app',
+      DATABASE_URL: 'postgresql://u:p@db.example.com:6543/postgres',
+      TELEGRAM_BOT_TOKEN: TOKEN,
+      TELEGRAM_WEBHOOK_SECRET: 'super-secret-value-123',
+      ...extra,
+    });
+
+  it('derives safe defaults on Vercel and refuses to run without a database URL', () => {
+    const e = vercelEnv();
+    expect(e).toMatchObject({ serverless: true, dbPoolMax: 2, TELEGRAM_MODE: 'webhook', APP_ORIGIN: 'https://cp-test.vercel.app', publicBaseUrl: 'https://cp-test.vercel.app' });
+    expect(() => loadEnv({ VERCEL: '1' })).toThrow(/DATABASE_URL is required on Vercel/);
+    expect(loadEnv({}).serverless).toBe(false);
+    expect(loadEnv({}).dbPoolMax).toBe(10);
+  });
+
+  it('webhook processes the update before acknowledging (nothing is lost when the instance freezes)', async () => {
+    const f = new FakeTelegram();
+    let releaseSend!: () => void;
+    const gate = new Promise<void>((r) => (releaseSend = r));
+    f.handlers.sendMessage = async () => {
+      await gate;
+      return { body: { ok: true, result: { message_id: 1 } } };
+    };
+    const e = vercelEnv();
+    const tg = setupTelegram({ db, env: e, conversation: deps(db), fetchImpl: f.fetch });
+    const app = createApp({ db, env: { ...e, NODE_ENV: 'test' }, ai: new RulesProvider(), telegram: tg });
+    let responded = false;
+    const pending = request(app)
+      .post('/api/telegram/webhook')
+      .set('x-telegram-bot-api-secret-token', 'super-secret-value-123')
+      .send(textUpdate(801, '/start'))
+      .then((r) => {
+        responded = true;
+        return r;
+      });
+    await new Promise((r) => setTimeout(r, 150));
+    expect(responded).toBe(false); // still sending the reply
+    releaseSend();
+    expect((await pending).status).toBe(200);
+    expect(f.allText(801)).toMatch(/Welcome/);
+  });
+
+  it('sends listing photos by public URL when deployed (PNG twin of the SVG)', async () => {
+    const f = new FakeTelegram();
+    const client = new TelegramClient({ token: TOKEN, fetchImpl: f.fetch });
+    const b = new TelegramBot({ db, conversation: deps(db), client, botId: '999', publicBaseUrl: 'https://cp-test.vercel.app' });
+    await b.handleUpdate(tapUpdate(802, 'd:CP-DEMO-001'));
+    const photo = f.calls.find((c) => c.method === 'sendPhoto')!;
+    expect(photo.files).toEqual([]);
+    expect(photo.params.photo).toBe('https://cp-test.vercel.app/demo-images/apartment-a.png');
+  });
+
+  it('serverless handler returns a clean 503 when misconfigured', async () => {
+    const prev = { VERCEL: process.env.VERCEL, DATABASE_URL: process.env.DATABASE_URL };
+    process.env.VERCEL = '1';
+    delete process.env.DATABASE_URL;
+    try {
+      vi.resetModules();
+      const { default: handler } = await import('../src/serverless.js');
+      const res = await request((req: import('node:http').IncomingMessage, r: import('node:http').ServerResponse) => void handler(req, r)).get('/api/health');
+      expect(res.status).toBe(503);
+      expect(JSON.stringify(res.body)).not.toMatch(/DATABASE_URL|stack/);
+    } finally {
+      if (prev.VERCEL === undefined) delete process.env.VERCEL;
+      else process.env.VERCEL = prev.VERCEL;
+      if (prev.DATABASE_URL !== undefined) process.env.DATABASE_URL = prev.DATABASE_URL;
+    }
+  });
+});
+
 describe('persistence across restart', () => {
   it('conversation context survives closing and reopening the database', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-tg-'));

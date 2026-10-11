@@ -53,6 +53,7 @@ export function setupTelegram(opts: {
       client,
       botId: String(me.id),
       publicDir: PUBLIC_DIR,
+      publicBaseUrl: env.publicBaseUrl,
       maxMessagesPerMinute: env.TELEGRAM_MAX_MESSAGES_PER_MINUTE,
     });
 
@@ -71,36 +72,52 @@ export function setupTelegram(opts: {
   if (!secret) return disabled('TELEGRAM_MODE=webhook requires TELEGRAM_WEBHOOK_SECRET.');
   let status: TelegramStatus = { state: 'starting' };
   let bot: TelegramBot | null = null;
+  let starting: Promise<TelegramStatus> | null = null;
   const expected = Buffer.from(secret);
-  const webhook: RequestHandler = (req, res) => {
+  async function start(): Promise<TelegramStatus> {
+    try {
+      const me = await client.call<TgUser>('getMe', {}, { retries: 2 });
+      bot = makeBot(me);
+      status = { state: 'running', username: me.username ?? String(me.id), mode: 'webhook' };
+    } catch (err) {
+      const reason =
+        err instanceof TelegramApiError && err.isUnauthorized ? 'TELEGRAM_BOT_TOKEN was rejected by Telegram.' : 'Could not reach Telegram.';
+      status = { state: err instanceof TelegramApiError && err.isUnauthorized ? 'disabled' : 'error', reason };
+      logger.error('telegram.start_failed', { reason });
+      starting = null; // allow a later request to retry
+    }
+    return status;
+  }
+  const ensureStarted = () => (starting ??= start());
+  const webhook: RequestHandler = async (req, res) => {
     const got = Buffer.from(req.get('x-telegram-bot-api-secret-token') ?? '');
     if (got.length !== expected.length || !crypto.timingSafeEqual(got, expected)) {
       res.status(401).json({ error: { code: 'unauthorized', message: 'Bad webhook secret' } });
       return;
     }
     const update = req.body as TgUpdate;
-    if (!bot || typeof update?.update_id !== 'number') {
-      res.status(bot ? 400 : 503).json({ ok: false });
+    if (typeof update?.update_id !== 'number') {
+      res.status(400).json({ ok: false });
       return;
     }
-    res.json({ ok: true }); // acknowledge fast; process asynchronously (deduped by update_id)
-    void bot.enqueue(update);
+    await ensureStarted();
+    if (!bot) {
+      res.status(503).json({ ok: false }); // Telegram retries later
+      return;
+    }
+    if (env.serverless) {
+      // Serverless instances may be frozen once the response is sent, so finish first.
+      // Errors are handled (and the user told) inside handleUpdate; always 200 to avoid retry storms.
+      await bot.handleUpdate(update);
+      res.json({ ok: true });
+    } else {
+      res.json({ ok: true }); // long-lived server: acknowledge fast, process in the background
+      void bot.enqueue(update);
+    }
   };
   return {
     status: () => status,
-    async start() {
-      try {
-        const me = await client.call<TgUser>('getMe', {}, { retries: 2 });
-        bot = makeBot(me);
-        status = { state: 'running', username: me.username ?? String(me.id), mode: 'webhook' };
-      } catch (err) {
-        const reason =
-          err instanceof TelegramApiError && err.isUnauthorized ? 'TELEGRAM_BOT_TOKEN was rejected by Telegram.' : 'Could not reach Telegram.';
-        status = { state: err instanceof TelegramApiError && err.isUnauthorized ? 'disabled' : 'error', reason };
-        logger.error('telegram.start_failed', { reason });
-      }
-      return status;
-    },
+    start: ensureStarted,
     async stop() {
       await bot?.idle();
     },

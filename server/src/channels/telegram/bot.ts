@@ -49,6 +49,8 @@ export interface TelegramBotOptions {
   botId: string;
   /** Directory holding site-relative images such as /demo-images/x.png (web/public). */
   publicDir?: string;
+  /** Public https origin of the site. When set, site-relative images are sent by URL (serverless). */
+  publicBaseUrl?: string;
   maxMessagesPerMinute?: number;
 }
 
@@ -434,7 +436,12 @@ export class TelegramBot {
   /** Telegram cannot display SVG; site-relative SVGs use a pre-rendered PNG twin if present. */
   private resolvePhoto(url: string): PhotoSource | null {
     if (/^https:\/\//i.test(url)) return /\.svg(\?|$)/i.test(url) ? null : { kind: 'url', url };
-    if (!url.startsWith('/') || !this.opts.publicDir) return null;
+    if (!url.startsWith('/') || url.includes('..')) return null;
+    if (this.opts.publicBaseUrl?.startsWith('https://')) {
+      // Deployed: Telegram fetches the PNG twin from the public site (no local files on serverless).
+      return { kind: 'url', url: `${this.opts.publicBaseUrl}${url.replace(/\.svg$/i, '.png')}` };
+    }
+    if (!this.opts.publicDir) return null;
     const root = path.resolve(this.opts.publicDir);
     let file = path.resolve(root, `.${url}`);
     if (!file.startsWith(root + path.sep)) return null; // path traversal guard

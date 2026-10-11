@@ -28,6 +28,13 @@ const EnvSchema = z.object({
   // 'require' encrypts without verifying the CA; 'verify' also verifies it (set DATABASE_SSL_CA).
   DATABASE_SSL: z.preprocess(emptyToUndefined, z.enum(['off', 'require', 'verify']).optional()),
   DATABASE_SSL_CA: z.preprocess(emptyToUndefined, z.string().optional()),
+  // Connections per process. Serverless (Vercel) runs many small instances, so keep it low there.
+  DB_POOL_MAX: z.coerce.number().int().min(1).max(50).optional(),
+  // Serverless functions skip migrations at cold start; run `npm run db:migrate` before deploying.
+  MIGRATE_ON_START: z.preprocess((v) => (typeof v === 'string' ? v === 'true' : v), z.boolean().optional()),
+  // Public https origin of the deployed site, e.g. https://chennai-properties.vercel.app.
+  // Used for Telegram photo URLs. Defaults to Vercel's production URL when deployed there.
+  PUBLIC_BASE_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
 
   // Telegram (optional). Without a token the bot is simply disabled.
   TELEGRAM_BOT_TOKEN: z.preprocess(emptyToUndefined, z.string().trim().optional()),
@@ -45,6 +52,10 @@ const EnvSchema = z.object({
 export type Env = z.infer<typeof EnvSchema> & {
   aiProvider: 'gemini' | 'rules';
   pgliteDataDir: string;
+  /** True when running as a Vercel serverless function. */
+  serverless: boolean;
+  dbPoolMax: number;
+  publicBaseUrl: string | undefined;
 };
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
@@ -60,10 +71,22 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
       'Invalid environment configuration:\n  - AI_PROVIDER=gemini requires GEMINI_API_KEY and GEMINI_MODEL',
     );
   }
+  const serverless = Boolean(source.VERCEL);
+  const vercelUrl = source.VERCEL_PROJECT_PRODUCTION_URL ? `https://${source.VERCEL_PROJECT_PRODUCTION_URL}` : undefined;
+  if (serverless && !env.DATABASE_URL) {
+    throw new Error(
+      'Invalid environment configuration:\n  - DATABASE_URL is required on Vercel (the embedded database cannot run on serverless). Use the Supabase transaction pooler URL (port 6543).',
+    );
+  }
   return {
     ...env,
+    APP_ORIGIN: source.APP_ORIGIN ? env.APP_ORIGIN : (vercelUrl ?? env.APP_ORIGIN),
+    TELEGRAM_MODE: env.TELEGRAM_MODE ?? (serverless && env.TELEGRAM_BOT_TOKEN ? 'webhook' : undefined),
     aiProvider,
     pgliteDataDir: path.resolve(serverRoot, env.PGLITE_DATA_DIR),
+    serverless,
+    dbPoolMax: env.DB_POOL_MAX ?? (serverless ? 2 : 10),
+    publicBaseUrl: (env.PUBLIC_BASE_URL ?? vercelUrl)?.replace(/\/$/, ''),
   };
 }
 

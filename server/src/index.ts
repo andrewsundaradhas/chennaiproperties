@@ -12,6 +12,7 @@ async function main() {
     databaseUrl: config.DATABASE_URL,
     ssl: config.DATABASE_SSL,
     sslCaFile: config.DATABASE_SSL_CA,
+    poolMax: config.dbPoolMax,
     pgliteDataDir: config.pgliteDataDir,
   });
   await migrate(db);

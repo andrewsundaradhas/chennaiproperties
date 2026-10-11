@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
 import pg from 'pg';
 import { logger } from '../lib/logger.js';
 
@@ -124,6 +124,7 @@ class PostgresDb implements Db {
 export interface DbOptions {
   databaseUrl?: string;
   ssl?: 'off' | 'require' | 'verify';
+  poolMax?: number;
   /** Path to a CA certificate (PEM) for ssl = 'verify', e.g. Supabase's root certificate. */
   sslCaFile?: string;
   /** Directory for the embedded database, or 'memory' for an ephemeral one (tests). */
@@ -139,8 +140,9 @@ export async function createDb(opts: DbOptions): Promise<Db> {
     url.searchParams.delete('sslmode');
     const pool = new pg.Pool({
       connectionString: url.toString(),
-      max: 10,
+      max: opts.poolMax ?? 10,
       connectionTimeoutMillis: 10_000,
+      idleTimeoutMillis: 10_000,
       ssl:
         mode === 'off'
           ? false
@@ -151,6 +153,8 @@ export async function createDb(opts: DbOptions): Promise<Db> {
     pool.on('error', (err) => logger.error('db.pool_error', { message: err.message }));
     return new PostgresDb(pool);
   }
+  // Loaded lazily so deployments that use DATABASE_URL never load the WASM database.
+  const { PGlite } = await import('@electric-sql/pglite');
   const dir = opts.pgliteDataDir ?? 'memory';
   if (dir === 'memory') return new PgliteDb(await PGlite.create());
   fs.mkdirSync(dir, { recursive: true });

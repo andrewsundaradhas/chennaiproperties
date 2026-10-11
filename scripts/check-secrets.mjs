@@ -14,7 +14,7 @@ const PATTERNS = [
   [/\b(?:ghp|gho|github_pat)_[A-Za-z0-9_]{20,}/, 'GitHub token'],
   [/\bsk-[A-Za-z0-9]{20,}/, 'API secret key'],
 ];
-const FORBIDDEN_FILES = [/(^|\/)\.env$/, /(^|\/)\.env\.(?!example$)[^/]+$/, /\.(pem|key|p12|pfx)$/, /(^|\/)pgdata\//];
+const FORBIDDEN_FILES = [/(^|\/)\.vercel\//, /(^|\/)\.env$/, /(^|\/)\.env\.(?!example$)[^/]+$/, /\.(pem|key|p12|pfx)$/, /(^|\/)pgdata\//];
 
 const files = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], { encoding: 'utf8' })
   .split('\n')
@@ -26,7 +26,12 @@ for (const file of files) {
   if (!fs.existsSync(file) || fs.statSync(file).size > 2_000_000 || file.endsWith('package-lock.json')) continue;
   const lines = fs.readFileSync(file, 'utf8').split('\n');
   lines.forEach((line, i) => {
-    for (const [re, label] of PATTERNS) if (re.test(line)) problems.push(`${file}:${i + 1}: possible ${label}`);
+    for (const [re, label] of PATTERNS) {
+      if (!re.test(line)) continue;
+      // Documentation/test placeholders pointing at reserved hosts are not credentials.
+      if (label.startsWith('Database URL') && /@(localhost|127\.0\.0\.1|[\w.-]*example\.(com|org|net))[:/]/.test(line)) continue;
+      problems.push(`${file}:${i + 1}: possible ${label}`);
+    }
   });
 }
 
