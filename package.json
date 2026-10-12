@@ -26,7 +26,14 @@
     "format": "prettier --write .",
     "check": "npm run check:secrets && npm run typecheck && npm run lint && npm test",
     "check:secrets": "node scripts/check-secrets.mjs",
-    "telegram:webhook": "npm run telegram:webhook -w server --"
+    "telegram:webhook": "npm run telegram:webhook -w server --",
+    "service:install": "node scripts/service.mjs install",
+    "service:status": "node scripts/service.mjs status",
+    "service:logs": "node scripts/service.mjs logs",
+    "service:restart": "node scripts/service.mjs restart",
+    "service:stop": "node scripts/service.mjs stop",
+    "service:start": "node scripts/service.mjs start",
+    "service:uninstall": "node scripts/service.mjs uninstall"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

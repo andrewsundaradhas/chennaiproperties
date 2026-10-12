@@ -17,7 +17,7 @@ export type TelegramStatus =
   | { state: 'waiting_for_lease'; username: string }
   | { state: 'error'; reason: string };
 
-const LEASE_SECONDS = 90;
+const LEASE_SECONDS = 60;
 const LONG_POLL_SECONDS = 25;
 
 export const BOT_COMMANDS = [
@@ -44,21 +44,28 @@ export class TelegramPoller {
     },
   ) {}
 
-  /** Validates the token and starts polling in the background. Never throws. */
+  /**
+   * Validates the token and starts polling in the background. Never throws. A rejected token is
+   * final; network problems (offline, Telegram down, Mac just woke up) are retried until they pass.
+   */
   async start(): Promise<TelegramStatus> {
     const { client } = this.deps;
-    let me: TgUser;
-    try {
-      me = await client.call<TgUser>('getMe', {}, { retries: 2 });
-    } catch (err) {
-      if (err instanceof TelegramApiError && err.isUnauthorized) {
-        this.status = { state: 'disabled', reason: 'TELEGRAM_BOT_TOKEN was rejected by Telegram (invalid or revoked). Get a new token from @BotFather.' };
-      } else {
-        this.status = { state: 'error', reason: 'Could not reach Telegram (network error). Will not poll until restarted.' };
+    let me: TgUser | null = null;
+    for (let attempt = 1; !me && !this.abort.signal.aborted; attempt++) {
+      try {
+        me = await client.call<TgUser>('getMe', {}, { retries: 2, signal: this.abort.signal });
+      } catch (err) {
+        if (err instanceof TelegramApiError && err.isUnauthorized) {
+          this.status = { state: 'disabled', reason: 'TELEGRAM_BOT_TOKEN was rejected by Telegram (invalid or revoked). Get a new token from @BotFather.' };
+          logger.error('telegram.start_failed', { reason: this.status.reason });
+          return this.status;
+        }
+        this.status = { state: 'error', reason: 'Cannot reach Telegram yet (network). Retrying automatically.' };
+        if (attempt === 1 || attempt % 10 === 0) logger.warn('telegram.start_retry', { attempt });
+        await sleep(this.deps.backoffMs?.(attempt) ?? Math.min(60_000, 2000 * 2 ** Math.min(attempt, 5)), this.abort.signal);
       }
-      logger.error('telegram.start_failed', { reason: this.status.reason });
-      return this.status;
     }
+    if (!me) return this.status;
     const username = me.username ?? String(me.id);
     try {
       const info = await client.call<{ url?: string }>('getWebhookInfo');
@@ -72,8 +79,24 @@ export class TelegramPoller {
       // non-fatal
     }
     const bot = this.deps.makeBot(me);
-    this.loop = this.run(bot, String(me.id), username);
+    this.loop = this.supervise(bot, String(me.id), username);
     return this.status;
+  }
+
+  /** Restarts the polling loop after any unexpected error, until stop() is called. */
+  private async supervise(bot: TelegramBot, botId: string, username: string) {
+    let crashes = 0;
+    while (!this.abort.signal.aborted) {
+      try {
+        await this.run(bot, botId, username);
+        return; // clean exit: stop() or a revoked token
+      } catch (err) {
+        crashes++;
+        logger.error('telegram.loop_crashed', { attempt: crashes, message: String((err as Error)?.message ?? err).slice(0, 200) });
+        this.status = { state: 'error', reason: 'Polling hit an error; restarting automatically.' };
+        await sleep(this.deps.backoffMs?.(crashes) ?? Math.min(60_000, 2000 * 2 ** Math.min(crashes, 5)), this.abort.signal);
+      }
+    }
   }
 
   async stop(): Promise<void> {
@@ -98,7 +121,16 @@ export class TelegramPoller {
            RETURNING last_update_id`,
           [botId, this.owner, LEASE_SECONDS],
         )
-        .catch(() => ({ rows: [] as { last_update_id: string | null }[] }));
+        .catch((err) => {
+          // Database unreachable (network, Supabase paused): wait and retry rather than exit.
+          logger.warn('telegram.db_unavailable', { message: String((err as Error)?.message ?? err).slice(0, 120) });
+          return null;
+        });
+      if (lease === null) {
+        this.status = { state: 'error', reason: 'Database unreachable; retrying.' };
+        await sleep(this.deps.backoffMs?.(++failures) ?? Math.min(30_000, 1000 * 2 ** Math.min(failures, 5)), signal);
+        continue;
+      }
       if (lease.rows.length === 0) {
         if (!announcedWait) {
           logger.warn('telegram.lease_held_elsewhere', { username, hint: 'Another process is polling this bot. Stop it, or wait for its lease to expire.' });

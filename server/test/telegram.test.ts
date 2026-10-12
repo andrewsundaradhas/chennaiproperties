@@ -548,6 +548,51 @@ describe('configuration, polling and webhook', () => {
     expect(f.allText(501)).toMatch(/Welcome/);
   });
 
+  it('keeps retrying startup while Telegram is unreachable, then starts polling', async () => {
+    const f = new FakeTelegram();
+    let tries = 0;
+    f.handlers.getMe = () => {
+      tries++;
+      if (tries <= 4) throw new TypeError('network down'); // client turns this into a network error
+      return { body: { ok: true, result: { id: 999, is_bot: true, first_name: 'CP', username: 'cp_test_bot' } } };
+    };
+    f.handlers.getUpdates = () => ({ body: { ok: true, result: [] } });
+    const client = new TelegramClient({ token: TOKEN, fetchImpl: f.fetch, maxRetries: 0 });
+    const poller = new TelegramPoller({ db, client, makeBot: () => new TelegramBot({ db, conversation: deps(db), client, botId: '999' }), backoffMs: () => 5 });
+    const status = await poller.start();
+    expect(tries).toBeGreaterThan(4);
+    expect(status.state).not.toBe('disabled');
+    await vi.waitFor(() => expect(poller.status).toMatchObject({ state: 'running' }));
+    await poller.stop();
+  });
+
+  it('restarts the polling loop after an unexpected error instead of ending', async () => {
+    const f = new FakeTelegram();
+    let polls = 0;
+    f.handlers.getUpdates = () => {
+      polls++;
+      return { body: { ok: true, result: [] } };
+    };
+    let failNext = 2;
+    const flakyDb = {
+      ...db,
+      kind: db.kind,
+      query: (sql: string, params?: unknown[]) => {
+        if (/INSERT INTO telegram_bot_state/.test(sql) && failNext-- > 0) return Promise.reject(new Error('connection terminated unexpectedly'));
+        return db.query(sql, params);
+      },
+      exec: db.exec.bind(db),
+      transaction: db.transaction.bind(db),
+      close: db.close.bind(db),
+    } as Db;
+    const client = new TelegramClient({ token: TOKEN, fetchImpl: f.fetch });
+    const poller = new TelegramPoller({ db: flakyDb, client, makeBot: () => new TelegramBot({ db, conversation: deps(db), client, botId: '999' }), backoffMs: () => 5 });
+    await poller.start();
+    await vi.waitFor(() => expect(polls).toBeGreaterThan(0), { timeout: 5000 });
+    expect(poller.status).toMatchObject({ state: 'running' });
+    await poller.stop();
+  });
+
   it('webhook mode verifies the secret header and processes updates', async () => {
     const f = new FakeTelegram();
     const e = env({ TELEGRAM_BOT_TOKEN: TOKEN, TELEGRAM_MODE: 'webhook', TELEGRAM_WEBHOOK_SECRET: 'super-secret-value-123' });
